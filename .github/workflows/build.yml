@@ -1,0 +1,58 @@
+name: Maven CI
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: eclipse-temurin:21-jdk
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Make mvnw executable (if present)
+        run: |
+          if [ -f "./mvnw" ]; then
+            chmod +x mvnw
+          fi
+
+      - name: Build with Maven
+        run: |
+          if [ -f "./mvnw" ]; then
+            ./mvnw -B clean test package
+          else
+            mvn -B clean test package
+          fi
+
+      - name: Upload JAR artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jars
+          path: ./target/*.jar
+
+  semgrep-sast:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep SAST
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: auto
+          generateSarif: true
+          output: semgrep-report.sarif
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: semgrep-report.sarif
