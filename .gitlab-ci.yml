@@ -1,0 +1,19 @@
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+stages:
+  - build
+
+build-job:
+  stage: build
+  tags:
+    - linux
+  image: eclipse-temurin:21-jdk
+  script:
+    - chmod +x mvnw
+    - ./mvnw clean package
+  artifacts:
+    paths:
+      - target/*.jar
+    expire_in: 1 week
