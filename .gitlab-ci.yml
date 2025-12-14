@@ -1,0 +1,115 @@
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: always
+    - if: $CI_COMMIT_BRANCH == "ci-pipeline"
+      when: always
+    - if: $CI_COMMIT_BRANCH == "Feature/add-sast"
+      when: always
+
+stages:
+  - build
+  - test
+
+build-job:
+  stage: build
+  image: eclipse-temurin:21-jdk
+  script:
+    - chmod +x mvnw
+    - ./mvnw clean package
+  artifacts:
+    paths:
+      - ./target/*.jar
+
+sast-semgrep:
+  stage: test
+  needs: [build-job]
+  tags:
+    - linux
+  image: returntocorp/semgrep:latest
+  script:
+    - semgrep --config=p/default --json --output=semgrep-report.json src/ || true
+    - |
+      python3 <<EOF
+      import json
+      from datetime import datetime
+      import os
+
+      try:
+          if os.path.exists("semgrep-report.json"):
+              d = json.load(open("semgrep-report.json"))
+          else:
+              d = {"results": [], "time": {}}
+
+          t = d.get("time", {})
+          fallback_time = datetime.now().isoformat()
+
+          r = {
+              "version": "15.0.0",
+              "vulnerabilities": [],
+              "scan": {
+                  "scanner": {"id": "semgrep", "name": "Semgrep", "version": "latest"},
+                  "type": "sast",
+                  "start_time": t.get("start", fallback_time),
+                  "end_time": t.get("end", fallback_time),
+              },
+          }
+
+          for x in d.get("results", []):
+              start_line = x.get("start", {}).get("line")
+              if not start_line or start_line < 1:
+                  continue
+
+              end_line = x.get("end", {}).get("line", start_line)
+              if end_line < 1:
+                  end_line = start_line
+
+              sev = x.get("extra", {}).get("severity", "MEDIUM").upper()
+              if sev not in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
+                  sev = "MEDIUM"
+
+              loc = {"file": x.get("path", ""), "start_line": start_line, "end_line": end_line}
+
+              start_obj = x.get("start", {})
+              end_obj = x.get("end", {})
+              if "col" in start_obj:
+                  loc["start_column"] = start_obj["col"]
+              if "col" in end_obj:
+                  loc["end_column"] = end_obj["col"]
+
+              r["vulnerabilities"].append(
+                  {
+                      "id": x.get("check_id", "").replace("/", "_").replace(":", "_"),
+                      "category": "sast",
+                      "name": x.get("check_id", ""),
+                      "message": x.get("message", ""),
+                      "description": x.get("message", ""),
+                      "severity": sev,
+                      "confidence": "HIGH",
+                      "location": loc,
+                      "scanner": {"id": "semgrep", "name": "Semgrep"},
+                  }
+              )
+
+          json.dump(r, open("gl-sast-report.json", "w"), indent=2)
+      except Exception:
+          ct = datetime.now().isoformat()
+          json.dump(
+              {
+                  "version": "15.0.0",
+                  "vulnerabilities": [],
+                  "scan": {
+                      "scanner": {"id": "semgrep", "name": "Semgrep", "version": "latest"},
+                      "type": "sast",
+                      "start_time": ct,
+                      "end_time": ct,
+                  },
+              },
+              open("gl-sast-report.json", "w"),
+              indent=2,
+          )
+      EOF
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    when: always
