@@ -1,0 +1,21 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+      when: always
+    - when: never
+
+stages:
+  - build
+
+build:
+  stage: build
+  image: eclipse-temurin:21-jdk
+  tags:
+    - saas-linux-small-amd64
+  script:
+    - chmod +x mvnw
+    - ./mvnw -q -ntp clean test package
+  artifacts:
+    paths:
+      - target/*.jar
+    expire_in: 1 week
