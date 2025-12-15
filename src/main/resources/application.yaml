@@ -1,29 +1,33 @@
 spring:
   application:
     name: course-management
+  # Исправлено: Security Misconfiguration - H2 консоль отключена (была включена с web-allow-others: true)
   h2:
     console:
-      enabled: true
+      enabled: false
       path: /h2-console
       settings:
-        web-allow-others: true
+        web-allow-others: false
   datasource:
     url: jdbc:h2:mem:courseapp;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
     username: sa
     password:
   jpa:
-    show-sql: true
+    # Исправлено: Security Misconfiguration - SQL логирование отключено в production
+    show-sql: false
     hibernate:
       ddl-auto: update
     defer-datasource-initialization: true
 management:
   endpoints:
     web:
+      # Исправлено: Security Misconfiguration - Actuator endpoints ограничены (было include: "*")
       exposure:
-        include: "*"
+        include: "health,info"
 server:
   error:
-    include-stacktrace: ALWAYS
+    # Исправлено: Security Misconfiguration - stacktrace отключен (было ALWAYS)
+    include-stacktrace: never
 app:
   plugin:
     url:
