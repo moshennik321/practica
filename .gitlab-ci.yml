@@ -20,7 +20,7 @@ stages:
 build-job:
   stage: build
   tags:
-    - saas-linux-small-amd64
+    - linux
   image: eclipse-temurin:21-jdk
   script:
     - chmod +x ./mvnw
@@ -33,7 +33,7 @@ sast-semgrep:
   stage: test
   needs: [build-job]
   tags:
-    - saas-linux-small-amd64
+    - linux
   image: returntocorp/semgrep:latest
   script:
     - semgrep --config=p/default --json --output=semgrep-report.json src/ || true
@@ -105,7 +105,7 @@ sca-dependency-check:
   stage: test
   needs: [build-job]
   tags:
-    - saas-linux-small-amd64
+    - linux
   image: eclipse-temurin:21-jdk
   script:
     - chmod +x ./mvnw
@@ -147,7 +147,7 @@ dast-zap-baseline:
   stage: test
   needs: [build-job]
   tags:
-    - saas-linux-small-amd64
+    - linux
   image:
     name: zaproxy/zap-stable
     entrypoint: [""]
@@ -177,7 +177,7 @@ dast-zap-api:
   stage: test
   needs: [build-job]
   tags:
-    - saas-linux-small-amd64
+    - linux
   image:
     name: zaproxy/zap-stable
     entrypoint: [""]
