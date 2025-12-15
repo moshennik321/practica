@@ -10,6 +10,8 @@ workflow:
       when: always
     - if: $CI_COMMIT_BRANCH == 'Feature/add-dast'
       when: always
+    - if: $CI_COMMIT_BRANCH == 'Final'
+      when: always
 
 stages:
   - build
@@ -18,7 +20,7 @@ stages:
 build-job:
   stage: build
   tags:
-    - linux
+    - saas-linux-small-amd64
   image: eclipse-temurin:21-jdk
   script:
     - chmod +x ./mvnw
@@ -31,7 +33,7 @@ sast-semgrep:
   stage: test
   needs: [build-job]
   tags:
-    - linux
+    - saas-linux-small-amd64
   image: returntocorp/semgrep:latest
   script:
     - semgrep --config=p/default --json --output=semgrep-report.json src/ || true
@@ -103,7 +105,7 @@ sca-dependency-check:
   stage: test
   needs: [build-job]
   tags:
-    - linux
+    - saas-linux-small-amd64
   image: eclipse-temurin:21-jdk
   script:
     - chmod +x ./mvnw
@@ -145,7 +147,7 @@ dast-zap-baseline:
   stage: test
   needs: [build-job]
   tags:
-    - linux
+    - saas-linux-small-amd64
   image:
     name: zaproxy/zap-stable
     entrypoint: [""]
@@ -175,7 +177,7 @@ dast-zap-api:
   stage: test
   needs: [build-job]
   tags:
-    - linux
+    - saas-linux-small-amd64
   image:
     name: zaproxy/zap-stable
     entrypoint: [""]

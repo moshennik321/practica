@@ -20,3 +20,4 @@ INSERT INTO COURSES (id, title, description, teacher_id)
 VALUES (1, 'RBPO', 'Basics of securing apps', 1),
        (2, 'Database Basics', 'Intro to SQL', 1);
 ALTER TABLE COURSES ALTER COLUMN ID RESTART WITH 3;
+
