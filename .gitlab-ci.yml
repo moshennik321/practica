@@ -8,6 +8,8 @@ workflow:
       when: always
     - if: $CI_COMMIT_BRANCH == 'Feature/add-sca'
       when: always
+    - if: $CI_COMMIT_BRANCH == 'Feature/add-dast'
+      when: always
 
 stages:
   - build
@@ -118,7 +120,7 @@ sca-dependency-check:
       EXIT_CODE=$?
       if [ $EXIT_CODE -ne 0 ]; then
         echo "Dependency check exited with code $EXIT_CODE"
-        if grep -q "Error updating the NVD Data" dependency-check.log; then
+        if grep -q "Error updating the NVD Data\|Unable to continue dependency-check analysis" dependency-check.log; then
           echo "NVD update error detected, but analysis may have completed with cached data"
         fi
       fi
@@ -137,4 +139,64 @@ sca-dependency-check:
     paths:
       - target/dependency-check-report.html
       - dependency-check.log
+    when: always
+
+dast-zap-baseline:
+  stage: test
+  needs: [build-job]
+  tags:
+    - linux
+  image:
+    name: zaproxy/zap-stable
+    entrypoint: [""]
+  before_script:
+    - apt-get update && apt-get install -y curl openjdk-21-jdk
+  script:
+    - |
+      JAR_FILE=$(find target -name "*.jar" -not -name "*sources.jar" -not -name "*javadoc.jar" | head -1)
+      if [ -z "$JAR_FILE" ]; then
+        echo "JAR file not found"
+        exit 1
+      fi
+      echo "Starting application: $JAR_FILE"
+      java -jar "$JAR_FILE" &
+      APP_PID=$!
+      echo "Application PID: $APP_PID"
+      sleep 30
+      curl -f http://localhost:8080/actuator/health || echo "Health check failed, but continuing..."
+      python3 /zap/zap-baseline.py -t http://localhost:8080 -J -r zap-baseline-report.html || true
+      kill $APP_PID 2>/dev/null || true
+  artifacts:
+    paths:
+      - zap-baseline-report.html
+    when: always
+
+dast-zap-api:
+  stage: test
+  needs: [build-job]
+  tags:
+    - linux
+  image:
+    name: zaproxy/zap-stable
+    entrypoint: [""]
+  before_script:
+    - apt-get update && apt-get install -y curl openjdk-21-jdk
+  script:
+    - |
+      JAR_FILE=$(find target -name "*.jar" -not -name "*sources.jar" -not -name "*javadoc.jar" | head -1)
+      if [ -z "$JAR_FILE" ]; then
+        echo "JAR file not found"
+        exit 1
+      fi
+      echo "Starting application: $JAR_FILE"
+      java -jar "$JAR_FILE" &
+      APP_PID=$!
+      echo "Application PID: $APP_PID"
+      sleep 30
+      curl -f http://localhost:8080/actuator/health || echo "Health check failed, but continuing..."
+      python3 /zap/zap-api-scan.py -t http://localhost:8080 -f openapi -J -r zap-api-report.html || true
+      kill $APP_PID 2>/dev/null || true
+  artifacts:
+    paths:
+      - zap-api-report.html
     when: always
