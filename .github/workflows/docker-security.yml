@@ -1,5 +1,4 @@
 name: Docker Security Scan
-
 on:
   push:
     branches: [ main, develop ]
@@ -11,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # ← ДОБАВЬ для Maven cache
 
       # Maven build JAR
       - name: Set up JDK 17
@@ -56,3 +57,4 @@ jobs:
     needs: docker-scan
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
