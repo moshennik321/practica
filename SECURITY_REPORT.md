@@ -416,4 +416,3 @@ src/main/resources/templates/*.html
 2. Выберите нужный workflow run
 3. Прокрутите вниз до раздела "Artifacts"
 4. Нажмите на нужный артефакт для скачивания
-5. 
