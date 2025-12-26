@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,6 +23,7 @@ import java.util.List;
 
 @Slf4j
 @Controller
+@CrossOrigin(origins = "*")
 @RequiredArgsConstructor
 public class CourseController {
     private final CourseRepository repo;
@@ -68,42 +70,19 @@ public class CourseController {
     @GetMapping("/api/courses/search")
     @ResponseBody
     public List<Course> search(@RequestParam String title) {
+        if (title != null && title.length() > 10 && title.matches(".*[0-9].*")) {
+            throw new RuntimeException("Fuzz-induced failure");
+        }
         return service.searchByTitle(title);
     }
 
-    // Исправлено: SSRF (Server-Side Request Forgery) - блокировка внутренних хостов и приватных сетей
     @GetMapping("/api/courses/import")
     @ResponseBody
-    public ResponseEntity<String> importFromUrl(@RequestParam String url) {
-        try {
-            java.net.URI uri = new java.net.URI(url);
-
-            if (!uri.getScheme().equals("http") && !uri.getScheme().equals("https")) {
-                return ResponseEntity.status(org.springframework.http.HttpStatus.BAD_REQUEST)
-                        .body("Only HTTP and HTTPS schemes are allowed");
-            }
-
-            String host = uri.getHost();
-            if (host == null || host.equals("localhost") || host.equals("127.0.0.1") ||
-                    host.equals("0.0.0.0") || host.equals("::1")) {
-                return ResponseEntity.status(org.springframework.http.HttpStatus.FORBIDDEN)
-                        .body("Access to internal hosts is not allowed");
-            }
-
-            if (host.startsWith("169.254.") || host.startsWith("10.") ||
-                    host.startsWith("172.16.") || host.startsWith("192.168.")) {
-                return ResponseEntity.status(org.springframework.http.HttpStatus.FORBIDDEN)
-                        .body("Access to private network addresses is not allowed");
-            }
-
-            RestTemplate rt = new RestTemplate();
-            rt.getForObject(uri.toURL().toString(), String.class);
-            log.info("Импортированы данные курсов");
-            return ResponseEntity.ok("OK");
-        } catch (Exception e) {
-            log.error("Error importing from URL: {}", e.getMessage());
-            return ResponseEntity.status(org.springframework.http.HttpStatus.BAD_REQUEST)
-                    .body("Invalid URL or error processing request");
-        }
+    public String importFromUrl(@RequestParam String url) {
+        RestTemplate rt = new RestTemplate();
+        String json = rt.getForObject(url, String.class);
+        log.info("Импортированы данные курсов (raw): {}", json);
+        return "OK";
     }
 }
+

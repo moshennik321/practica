@@ -1,0 +1,61 @@
+name: Web Fuzzing
+
+on:
+  push:
+    branches: [ main, feature/github-fuzzing ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build application
+        run: mvn -q clean package
+
+      - name: Run application
+        run: |
+          java -jar target/*.jar &
+          echo "Waiting for app to start..."
+          sleep 25
+        env:
+          SPRING_PROFILES_ACTIVE: test
+
+      - name: Fuzz /api/courses/search
+        run: |
+          set -e
+
+          BASE_URL="http://localhost:8080"
+          ENDPOINT="/api/courses/search"
+          MAX_REQUESTS=200
+
+          echo "Start fuzzing ${BASE_URL}${ENDPOINT} with ${MAX_REQUESTS} requests"
+
+          for i in $(seq 1 $MAX_REQUESTS); do
+            PAYLOAD=$(openssl rand -hex 12)
+
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              -G "${BASE_URL}${ENDPOINT}" \
+              --data-urlencode "title=${PAYLOAD}")
+
+            echo "[$i] status=${STATUS}, title=${PAYLOAD}"
+
+            if [[ "$STATUS" =~ ^5[0-9][0-9]$ ]]; then
+              echo "Server error (${STATUS}) detected during fuzzing, failing pipeline"
+              exit 1
+            fi
+          done
+
+          echo "Fuzzing finished without 5xx responses"
+          
