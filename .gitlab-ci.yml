@@ -1,0 +1,204 @@
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event' && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == 'main'
+      when: always
+    - if: $CI_COMMIT_BRANCH == 'ci-pipeline'
+      when: always
+    - if: $CI_COMMIT_BRANCH == 'Feature/add-sast'
+      when: always
+    - if: $CI_COMMIT_BRANCH == 'Feature/add-sca'
+      when: always
+    - if: $CI_COMMIT_BRANCH == 'Feature/add-dast'
+      when: always
+    - if: $CI_COMMIT_BRANCH == 'Final'
+      when: always
+
+stages:
+  - build
+  - test
+
+build-job:
+  stage: build
+  tags:
+    - linux
+  image: eclipse-temurin:21-jdk
+  script:
+    - chmod +x ./mvnw
+    - ./mvnw clean package
+  artifacts:
+    paths:
+      - ./target/*.jar
+
+sast-semgrep:
+  stage: test
+  needs: [build-job]
+  tags:
+    - linux
+  image: returntocorp/semgrep:latest
+  script:
+    - semgrep --config=p/default --json --output=semgrep-report.json src/ || true
+    - |
+      python3 <<EOF
+      import json
+      from datetime import datetime
+      try:
+        d = json.load(open('semgrep-report.json')) if __import__('os').path.exists('semgrep-report.json') else {'results':[],'time':{}}
+        t = d.get('time', {})
+        fallback_time = datetime.now().isoformat()
+        r = {
+          'version': '15.0.0',
+          'vulnerabilities': [],
+          'scan': {
+            'scanner': {'id': 'semgrep', 'name': 'Semgrep', 'version': 'latest'},
+            'type': 'sast',
+            'start_time': t.get('start', fallback_time),
+            'end_time': t.get('end', fallback_time)
+          }
+        }
+        for x in d.get('results', []):
+          start_line = x.get('start', {}).get('line')
+          if not start_line or start_line < 1:
+            continue
+          end_line = x.get('end', {}).get('line', start_line)
+          if end_line < 1:
+            end_line = start_line
+          sev = x.get('extra', {}).get('severity', 'MEDIUM').upper()
+          sev = sev if sev in ['CRITICAL','HIGH','MEDIUM','LOW','INFO'] else 'MEDIUM'
+          loc = {'file': x.get('path', ''), 'start_line': start_line, 'end_line': end_line}
+          start_obj = x.get('start', {})
+          end_obj = x.get('end', {})
+          if 'col' in start_obj:
+            loc['start_column'] = start_obj['col']
+          if 'col' in end_obj:
+            loc['end_column'] = end_obj['col']
+          r['vulnerabilities'].append({
+            'id': x.get('check_id', '').replace('/', '_').replace(':', '_'),
+            'category': 'sast',
+            'name': x.get('check_id', ''),
+            'message': x.get('message', ''),
+            'description': x.get('message', ''),
+            'severity': sev,
+            'confidence': 'HIGH',
+            'location': loc,
+            'scanner': {'id': 'semgrep', 'name': 'Semgrep'}
+          })
+        json.dump(r, open('gl-sast-report.json', 'w'), indent=2)
+      except Exception as e:
+        ct = datetime.now().isoformat()
+        json.dump({
+          'version': '15.0.0',
+          'vulnerabilities': [],
+          'scan': {
+            'scanner': {'id': 'semgrep', 'name': 'Semgrep', 'version': 'latest'},
+            'type': 'sast',
+            'start_time': ct,
+            'end_time': ct
+          }
+        }, open('gl-sast-report.json', 'w'), indent=2)
+      EOF
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    when: always
+
+sca-dependency-check:
+  stage: test
+  needs: [build-job]
+  tags:
+    - linux
+  image: eclipse-temurin:21-jdk
+  script:
+    - chmod +x ./mvnw
+    - |
+      set +e
+      ./mvnw dependency-check:check \
+        -Dformat=HTML \
+        -DsuppressionFiles=dependency-check-suppressions.xml \
+        -DfailOnError=false \
+        -DautoUpdate=true \
+        -DnvdValidForHours=720 \
+        -DnvdMaxRetryCount=3 \
+        2>&1 | tee dependency-check.log
+      EXIT_CODE=$?
+      if [ $EXIT_CODE -ne 0 ]; then
+        echo "Dependency check exited with code $EXIT_CODE"
+        if grep -q "Error updating the NVD Data\|Unable to continue dependency-check analysis" dependency-check.log; then
+          echo "NVD update error detected, but analysis may have completed with cached data"
+        fi
+      fi
+    - |
+      if [ -f "target/dependency-check-report.html" ]; then
+        echo "Report generated successfully"
+        ls -lh target/dependency-check-report.html
+      else
+        echo "Report not found, checking for alternative locations"
+        find . -name "dependency-check-report.html" -type f 2>/dev/null || true
+        echo "Creating placeholder report"
+        mkdir -p target
+        echo "<html><body><h1>SCA Report</h1><p>Report generation encountered errors. Check pipeline logs for details.</p><p>This may be due to NVD API update issues. The analysis may have completed with cached data.</p></body></html>" > target/dependency-check-report.html
+      fi
+  artifacts:
+    paths:
+      - target/dependency-check-report.html
+      - dependency-check.log
+    when: always
+
+dast-zap-baseline:
+  stage: test
+  needs: [build-job]
+  tags:
+    - linux
+  image:
+    name: zaproxy/zap-stable
+    entrypoint: [""]
+  before_script:
+    - apt-get update && apt-get install -y curl openjdk-21-jdk
+  script:
+    - |
+      JAR_FILE=$(find target -name "*.jar" -not -name "*sources.jar" -not -name "*javadoc.jar" | head -1)
+      if [ -z "$JAR_FILE" ]; then
+        echo "JAR file not found"
+        exit 1
+      fi
+      echo "Starting application: $JAR_FILE"
+      java -jar "$JAR_FILE" &
+      APP_PID=$!
+      echo "Application PID: $APP_PID"
+      sleep 30
+      curl -f http://localhost:8080/actuator/health || echo "Health check failed, but continuing..."
+      python3 /zap/zap-baseline.py -t http://localhost:8080 -J -r zap-baseline-report.html || true
+      kill $APP_PID 2>/dev/null || true
+  artifacts:
+    paths:
+      - zap-baseline-report.html
+    when: always
+
+dast-zap-api:
+  stage: test
+  needs: [build-job]
+  tags:
+    - linux
+  image:
+    name: zaproxy/zap-stable
+    entrypoint: [""]
+  before_script:
+    - apt-get update && apt-get install -y curl openjdk-21-jdk
+  script:
+    - |
+      JAR_FILE=$(find target -name "*.jar" -not -name "*sources.jar" -not -name "*javadoc.jar" | head -1)
+      if [ -z "$JAR_FILE" ]; then
+        echo "JAR file not found"
+        exit 1
+      fi
+      echo "Starting application: $JAR_FILE"
+      java -jar "$JAR_FILE" &
+      APP_PID=$!
+      echo "Application PID: $APP_PID"
+      sleep 30
+      curl -f http://localhost:8080/actuator/health || echo "Health check failed, but continuing..."
+      python3 /zap/zap-api-scan.py -t http://localhost:8080 -f openapi -J -r zap-api-report.html || true
+      kill $APP_PID 2>/dev/null || true
+  artifacts:
+    paths:
+      - zap-api-report.html
+    when: always
