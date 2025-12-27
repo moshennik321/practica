@@ -1,0 +1,95 @@
+name: Web Fuzzing
+
+on:
+  push:
+    branches: [ main, feature/github-fuzzing2 ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build application
+        run: mvn -q clean package -DskipTests
+
+      - name: Run application
+        run: |
+          nohup java -jar target/*.jar > app.log 2>&1 &
+          APP_PID=$!
+          echo "App PID: $APP_PID"
+          echo "Waiting for app to start..."
+          
+          # Ждём готовности порта
+          for i in {1..60}; do
+            if curl -s http://localhost:8080/actuator/health > /dev/null 2>&1; then
+              echo "App ready on port 8080"
+              break
+            fi
+            echo "Waiting... ($i/60)"
+            sleep 1
+          done
+          
+          if ! curl -s http://localhost:8080/actuator/health > /dev/null 2>&1; then
+            echo "App failed to start"
+            cat app.log
+            exit 1
+          fi
+        env:
+          SPRING_PROFILES_ACTIVE: test
+
+      - name: Fuzz /api/courses/search
+        run: |
+          set -e
+          BASE_URL="http://localhost:8080"
+          ENDPOINT="/api/courses/search"
+          MAX_REQUESTS=300
+
+          echo "Start fuzzing ${BASE_URL}${ENDPOINT} with ${MAX_REQUESTS} requests"
+
+          # ТЕСТОВЫЕ PAYLOAD'ы которые ТОЧНО вызовут сбой
+          FUZZ_PAYLOADS=(
+            "a"$(seq 1 25 | xargs -I {} echo -n "x{}")
+            "test12345678901234567890"
+            $(openssl rand -hex 20)1234567890
+            "fuzz_$(date +%s)_$(openssl rand -hex 8)_99999"
+          )
+
+          for i in $(seq 1 $MAX_REQUESTS); do
+            # СЛУЧАЙНЫЙ payload С ДЛИНОЙ >20 + ЦИФРЫ
+            PAYLOAD="fuzz_${i}_$(openssl rand -hex 8)_$(shuf -i 1000-9999 -n 1)"
+          
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              -G --max-time 5 "${BASE_URL}${ENDPOINT}" \
+              --data-urlencode "title=${PAYLOAD}")
+
+            echo "[$i/${MAX_REQUESTS}] status=${STATUS} len=${#PAYLOAD} payload=${PAYLOAD:0:30}..."
+
+            # FAIL при любых ошибках сервера
+            if [[ "$STATUS" =~ ^(5[0-9][0-9]|4(0[0-9]|0[4-9]|1[0-9]|2[0-9]|90|91|92|93|94|95|96|97|98|99))$ ]]; then
+              echo "FUZZING FAILURE! Server error (${STATUS}) on payload: ${PAYLOAD}"
+              curl -s "${BASE_URL}${ENDPOINT}?title=${PAYLOAD}" || true
+              exit 1
+            fi
+          done
+
+          echo "Fuzzing COMPLETED: No server errors detected!"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill -f 'java -jar' || true
+          echo "App killed"

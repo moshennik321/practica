@@ -70,8 +70,14 @@ public class CourseController {
     @GetMapping("/api/courses/search")
     @ResponseBody
     public List<Course> search(@RequestParam String title) {
+        // УПРОСТИ — длина > 20 = сбой
+        if (title != null && title.length() > 20) {
+            throw new RuntimeException("Fuzz-induced failure: long input");
+        }
         return service.searchByTitle(title);
     }
+
+
 
     @GetMapping("/api/courses/import")
     @ResponseBody
@@ -82,3 +88,6 @@ public class CourseController {
         return "OK";
     }
 }
+
+
+
