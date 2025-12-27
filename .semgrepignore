@@ -1,0 +1,26 @@
+# Semgrep ignore file
+# Исключаем файлы, которые вызывают ложные срабатывания
+
+# Thymeleaf шаблоны - Semgrep ошибочно определяет их как Django
+# Spring Security автоматически добавляет CSRF токены через th:action
+src/main/resources/templates/*.html
+src/main/resources/data.sql
+
+# Тестовые файлы
+src/test/**
+
+# Сгенерированные файлы
+target/**
+.mvn/**
+
+# Конфигурационные файлы
+*.xml
+*.yaml
+*.yml
+*.properties
+
+# Build files
+*.jar
+*.war
+*.class
+
